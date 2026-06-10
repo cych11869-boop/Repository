@@ -6,23 +6,83 @@ from ortools.sat.python import cp_model
 
 st.set_page_config(page_title="醫療 AI 排班系統", page_icon="🏥", layout="wide")
 
-st.title("🏥 醫療 AI 智能排班系統")
+st.title("🏥 醫療 AI 智能排班系統 V4 (通用字典版)")
 st.markdown("上傳您的排班底稿，AI 將在 60 秒內為您產出完美班表！")
 
+# =====================================================================
+# 📝 模板下載區：加入【班別設定】新分頁
+# =====================================================================
+def generate_template():
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        # 1. 基本設定
+        pd.DataFrame({
+            '參數名稱': ['排班週數 (Weeks)', 'N班最低包班天數', 'E班最低包班天數'],
+            '設定值': [4, 12, 12],
+            '說明': ['1~4週', '整個週期內N班最少要上幾天', '整個週期內E班最少要上幾天']
+        }).to_excel(writer, sheet_name='基本設定', index=False)
+        
+        # 2. 排班底稿
+        grid_data = [
+            ['[需求]N班', 'REQ'] + ['']*7 + [2]*28,
+            ['[需求]E班', 'REQ'] + ['']*7 + [3]*28,
+            ['[需求]D班', 'REQ'] + ['']*7 + [5]*28, 
+        ]
+        staff_list = [('R01', 'N'), ('R02', 'N'), ('R03', 'E'), ('R04', 'R'), ('R15_孕婦', 'D')]
+        columns = ['員工代碼', '群組(N/E/R/D)'] + [f'歷史_{i}' for i in range(1, 8)] + [f'Day_{i}' for i in range(1, 29)]
+        for e, grp in staff_list: grid_data.append([e, grp] + ['X']*7 + ['']*28)
+        pd.DataFrame(grid_data, columns=columns).to_excel(writer, sheet_name='排班底稿', index=False)
+
+        # 3. 🌟 全新【班別設定】字典
+        dict_data = {
+            '系統代碼': ['N1', 'N2', 'E1', 'E2', 'E3', 'D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'D7'],
+            '平日顯示名稱': ['N1 0000-0800', 'N2 0000-0800', 'E1 1600-0000', 'E2 1600-0000', 'E3 1600-0000', 'D1 0730-1600', 'DBR 0730-1600', 'DBA 0730-1600', 'DCB 0800-1700', 'DF 0800-1700', 'DF 0800-1700', 'DF 0800-1700'],
+            '星期六顯示名稱': ['N1 0000-0800', 'N2 0000-0800', 'E1 1600-0000', 'E2 1600-0000', 'E3 1600-0000', 'D6 0730-1600', 'DBR 0800-1600', 'DBA 0800-1600', 'D4 0730-1600', 'D8 0730-1600', 'D9 0800-1600', 'DF 0800-1700'],
+            '星期日顯示名稱': ['N1 0000-0800', 'N2 0000-0800', 'E1 1600-0000', 'E2 1600-0000', 'E3 1600-0000', 'D4 0800-1600', 'DBR 0800-1600', 'DBA 0800-1600', 'DF 0800-1700', 'DF 0800-1700', 'DF 0800-1700', 'DF 0800-1700']
+        }
+        pd.DataFrame(dict_data).to_excel(writer, sheet_name='班別設定', index=False)
+        
+    return output.getvalue()
+
+with st.expander("第一次使用？點此下載空白模板"):
+    st.markdown("模板已升級！內含**【班別設定】**分頁，可自由修改貴單位專屬的上下班時間與代號。")
+    st.download_button("📥 下載 V4 升級版模板", data=generate_template(), file_name="Schedule_Template_V4.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+# =====================================================================
 # 側邊欄：取代原本 Excel 的【基本設定】
+# =====================================================================
 st.sidebar.header("⚙️ 參數設定")
 st.sidebar.markdown("網頁版可直接在此拉動參數，**將覆蓋 Excel 內的設定**。")
 weeks = st.sidebar.slider("排班週數 (Weeks)", 1, 4, 1)
 n_min_shifts = st.sidebar.slider("N班最低包班天數", 0, 20, 0)
 e_min_shifts = st.sidebar.slider("E班最低包班天數", 0, 20, 3)
 
-uploaded_file = st.file_uploader("📂 請上傳排班底稿 (Schedule_Input.xlsx)", type=['xlsx'])
+uploaded_file = st.file_uploader("📂 請上傳排班底稿", type=['xlsx'])
 
 if uploaded_file is not None:
     if st.button("🚀 啟動 AI 最佳化排班", use_container_width=True):
-        with st.spinner("🧠 AI 正在進行深度運算與防堵搭便車機制... (約需 60 秒)"):
+        with st.spinner("🧠 AI 正在讀取班別字典與進行深度運算... (約需 60 秒)"):
             try:
-                # 1. 讀取資料
+                # ==========================================================
+                # 🌟 讀取動態班別字典 (相容舊版機制)
+                # ==========================================================
+                dict_weekday, dict_sat, dict_sun = {}, {}, {}
+                try:
+                    df_dict = pd.read_excel(uploaded_file, sheet_name='班別設定')
+                    for _, row in df_dict.iterrows():
+                        code = str(row['系統代碼']).strip()
+                        dict_weekday[code] = str(row['平日顯示名稱']).strip()
+                        dict_sat[code] = str(row['星期六顯示名稱']).strip()
+                        dict_sun[code] = str(row['星期日顯示名稱']).strip()
+                    st.toast("✅ 成功讀取自訂班別字典！", icon="📖")
+                except ValueError:
+                    st.warning("⚠️ 您上傳的是舊版 Excel (無『班別設定』分頁)。已為您啟動內建預設字典！建議您下載 V4 模板以獲得最高自由度。")
+                    # 舊版預設字典備用
+                    dict_weekday = {'N1': 'N1 0000-0800', 'N2': 'N2 0000-0800', 'E1': 'E1 1600-0000', 'E2': 'E2 1600-0000', 'E3': 'E3 1600-0000', 'D1': 'D1 0730-1600', 'D2': 'DBR 0730-1600', 'D3': 'DBA 0730-1600', 'D4': 'DCB 0800-1700', 'D5': 'DF 0800-1700', 'D6': 'DF 0800-1700', 'D7': 'DF 0800-1700'}
+                    dict_sat = {'N1': 'N1 0000-0800', 'N2': 'N2 0000-0800', 'E1': 'E1 1600-0000', 'E2': 'E2 1600-0000', 'E3': 'E3 1600-0000', 'D1': 'D6 0730-1600', 'D2': 'DBR 0800-1600', 'D3': 'DBA 0800-1600', 'D4': 'D4 0730-1600', 'D5': 'D8 0730-1600', 'D6': 'D9 0800-1600'}
+                    dict_sun = {'N1': 'N1 0000-0800', 'N2': 'N2 0000-0800', 'E1': 'E1 1600-0000', 'E2': 'E2 1600-0000', 'E3': 'E3 1600-0000', 'D1': 'D4 0800-1600', 'D2': 'DBR 0800-1600', 'D3': 'DBA 0800-1600'}
+
+                # 讀取排班底稿
                 target_days, num_days, total_x_quota = weeks * 7, 7 + weeks * 7, weeks * 2
                 df_grid = pd.read_excel(uploaded_file, sheet_name='排班底稿')
                 
@@ -62,7 +122,6 @@ if uploaded_file is not None:
                 shift_codes = {'X': 1, 'F': 2, 'N': 3, 'E': 4, 'D': 5}
                 all_shifts = list(shift_codes.values())
 
-                # 2. 啟動模型
                 model = cp_model.CpModel()
                 works = {}
                 for e in all_staff:
@@ -171,29 +230,16 @@ if uploaded_file is not None:
                 status = solver.Solve(model)
 
                 if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
-                    st.success("✅ 計算完成！")
+                    st.success("✅ 運算完成！已套用客製化班別字典。")
                     reverse_shift_codes = {1: 'X', 2: 'F', 3: 'N', 4: 'E', 5: 'D'}
                     schedule_data = []
                     for e in all_staff:
                         schedule_data.append([e] + [reverse_shift_codes[s] for d in range(7, num_days) for s in all_shifts if solver.Value(works[(e, d, s)]) == 1])
                     df_out = pd.DataFrame(schedule_data, columns=['Staff'] + [f'Day_{i}' for i in range(1, target_days + 1)])
                     
-                    format_map_base = {
-                        'N1': 'N1 0000-0800', 'N2': 'N2 0000-0800', 
-                        'E1': 'E1 1600-0000', 'E2': 'E2 1600-0000', 'E3': 'E3 1600-0000'
-                    }
-                    format_map_weekday = {
-                        'D1': 'D1 0730-1600', 'D2': 'DBR 0730-1600', 'D3': 'DBA 0730-1600', 
-                        'D4': 'DCB 0800-1700', 'D5': 'DF 0800-1700', 'D6': 'DF 0800-1700', 'D7': 'DF 0800-1700'
-                    }
-                    format_map_sat = {
-                        'D1': 'D6 0730-1600', 'D2': 'DBR 0800-1600', 'D3': 'DBA 0800-1600',
-                        'D4': 'D4 0730-1600', 'D5': 'D8 0730-1600', 'D6': 'D9 0800-1600'
-                    }
-                    format_map_sun = {
-                        'D1': 'D4 0800-1600', 'D2': 'DBR 0800-1600', 'D3': 'DBA 0800-1600'
-                    }
-
+                    # ==========================================================
+                    # 🌟 轉換輸出：套用動態 Excel 字典
+                    # ==========================================================
                     for col in df_out.columns[1:]:
                         day_idx = int(col.split('_')[1])
                         d = 6 + day_idx
@@ -204,16 +250,22 @@ if uploaded_file is not None:
                         p_N, p_E, p_D = [f'N{i}' for i in range(1, len(idx_N)+1)], [f'E{i}' for i in range(1, len(idx_E)+1)], [f'D{i}' for i in range(1, len(idx_D)+1)]
                         random.shuffle(p_N); random.shuffle(p_E); random.shuffle(p_D)
                         
-                        for i, idx in enumerate(idx_N): df_out.at[idx, col] = format_map_base.get(p_N[i], p_N[i])
-                        for i, idx in enumerate(idx_E): df_out.at[idx, col] = format_map_base.get(p_E[i], p_E[i])
+                        # N 與 E 視為跨平假日皆相同，直接吃平日字典
+                        for i, idx in enumerate(idx_N): 
+                            df_out.at[idx, col] = dict_weekday.get(p_N[i], p_N[i])
+                        for i, idx in enumerate(idx_E): 
+                            df_out.at[idx, col] = dict_weekday.get(p_E[i], p_E[i])
                         
+                        # D 班嚴格區分平假日字典，若查無此代碼，退回通用防呆代碼
                         for i, idx in enumerate(idx_D): 
                             code = p_D[i]
-                            if is_sat: df_out.at[idx, col] = format_map_sat.get(code, 'DF 0800-1700')
-                            elif is_sun: df_out.at[idx, col] = format_map_sun.get(code, 'DF 0800-1700')
+                            fallback = f"{code} 0800-1700" # 若沒設定，預設給個時間
+                            if is_sat: 
+                                df_out.at[idx, col] = dict_sat.get(code, fallback)
+                            elif is_sun: 
+                                df_out.at[idx, col] = dict_sun.get(code, fallback)
                             else:
-                                if int(code.replace('D','')) > 7: df_out.at[idx, col] = 'DF 0800-1700'
-                                else: df_out.at[idx, col] = format_map_weekday.get(code, code)
+                                df_out.at[idx, col] = dict_weekday.get(code, fallback)
 
                     x_format_map = {1: '休', 2: '例'}
                     for idx in df_out.index:
@@ -226,7 +278,6 @@ if uploaded_file is not None:
                     
                     st.dataframe(df_out)
                     
-                    # 轉換為 Excel 供下載
                     output = io.BytesIO()
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
                         df_out.to_excel(writer, index=False, sheet_name='神仙班表')
